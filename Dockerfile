@@ -10,7 +10,6 @@ RUN curl --location --output ns.rpm https://rpm.nodesource.com/pub_6.x/el/7/x86_
 RUN rpm --checksig ns.rpm
 RUN rpm --install --force ns.rpm
 RUN npm install -g npm@latest
-RUN npm install -g aws-lambda-local
 RUN npm cache clean --force
 RUN yum clean all
 RUN rm --force ns.rpm

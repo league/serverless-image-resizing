@@ -8,6 +8,7 @@
   "main": "index.js",
   "dependencies": {
     "sharp": "^0.17.3",
-    "aws-sdk": "^2.36.0"
+    "aws-sdk": "^2.36.0",
+    "aws-lambda-local": "^1.0.15"
   }
 }
