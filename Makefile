@@ -30,5 +30,8 @@ sig:
 	runhaskell -Wall sign.hs "$(SECRET_KEY)" "$(BODY)"
 
 clean:
-	rm -r lambda/node_modules
+	rm -rf lambda/node_modules
+	aws s3 rm --recursive s3://$(TEST_BUCKET)
+
+reallyclean: clean
 	docker rmi --force amazonlinux:nodejs

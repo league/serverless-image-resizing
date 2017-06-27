@@ -1,5 +1,6 @@
 'use strict';
 
+const Ed25519 = require('ed25519');
 const AWS = require('aws-sdk');
 const S3 = new AWS.S3({
   signatureVersion: 'v4',
@@ -13,8 +14,10 @@ const public_key = Buffer.from(PUBLIC_KEY_B64, 'base64');
 
 const theHandler = function(event, context, callback) {
   const key = event.queryStringParameters.key;
+
   const match = key.match(/custom\/([0-9a-f]+)\.([-_0-9A-Za-z]+)\.(\d+)x(\d+)\.([-_0-9A-Za-z]+)\.([a-z]+)/);
   //                                ^ID          ^SIG1            ^W    ^H      ^SIG2             ^EXT
+
   if(match == null) {
     callback({
       statusCode: '400',
@@ -24,6 +27,7 @@ const theHandler = function(event, context, callback) {
     return;
   }
 
+  // Extract parts of the regex
   const photoId = match[1];
   const sig1 = match[2];
   const width = parseInt(match[3], 10);
@@ -33,9 +37,22 @@ const theHandler = function(event, context, callback) {
   const signedBase = sig1 + "." + width + "x" + height;
   const originalKey = "fullsize/" + photoId + "." + sig1 + "." + ext;
 
+  // Verify the cryptographic signature
+  const r = Ed25519.Verify(Buffer.from(signedBase, 'utf-8'),
+                           Buffer.from(sig2, 'base64'),
+                           public_key);
+  if(!r) {
+    callback({
+      statusCode: '403',
+      code: 'Forbidden',
+      body: 'Signature is invalid'
+    });
+    return;
+  }
+
+  // Interpret the extension as an image type
   var targetFormat;
   var contentType;
-
   if(ext == "jpg") {
     targetFormat = "jpeg";
     contentType = "image/jpeg";
@@ -110,22 +127,30 @@ exports.handler = function(event, context, callback) {
       });
 
     testHandler(
-      "custom/ffffffffffffffff.ABCD1234abcd.1x1.EFGH5678efgh.png",
+      "custom/ffffffffffffffff.ABCD1234abcd.1x1.OgEgRk5kqIkD5cQgVnZnCIGL6EYdePjfNIysu7yzf8pCp8DTjWg3GwerIInQQEuvrErvcg26SkMz6ScVNVdfBg.png",
       "NoSuchKey response",
       function(err, result) {
         return err != null && 'code' in err && err.code == 'NoSuchKey';
       });
 
     testHandler(
+      "custom/a3f7.LEcqytQt83qwZN1xyzvgJ7Op92AtPmauZI4bNwvuwm9leEmKjb0IWnARYRTJZaeGXQ2LyCYmdCbxlYuyx3UsCw.320x200.BTGohpOGOqehvwV7R6ULd2fqnFN79_9M3FmaX00X8btOS38Lz-ukt4PWhElHKDNWzxMaDmeMsQpykl-CLXqkCA.png",
+      "Bad signature",
+      function(err, result) {
+        return err != null && 'code' in err && err.code == 'Forbidden';
+      }
+    );
+
+    testHandler(
       // Original is 3200x2000, so we'll try 10% = 320x200
-      "custom/a3f7.LEcqytQt83qwZN1xyzvgJ7Op92AtPmauZI4bNwvuwm9leEmKjb0IWnARYRTJZaeGXQ2LyCYmdCbxlYuyx3UsCw.320x200.abc.png",
+      "custom/a3f7.LEcqytQt83qwZN1xyzvgJ7Op92AtPmauZI4bNwvuwm9leEmKjb0IWnARYRTJZaeGXQ2LyCYmdCbxlYuyx3UsCw.320x200.BTGoHpOGOqehvwV7R6ULd2fqnFN79_9M3FmaX00X8btOS38Lz-ukt4PWhElHKDNWzxMaDmeMsQpykl-CLXqkCA.png",
       "Good resize response for png",
       goodRedirectResult
     );
 
     testHandler(
       // Original was 3120x4160 so we'll try 25% = 780x1040
-      "custom/c21.-1hHvql9LlvDiKGc9zZsJwGCUcN4xbu3PFkiguH1ExSfII5bTO3j_3PSX6cYrJdwbUDWWcyhCi85wTtlKP0NDQ.780x1040.abc.jpg",
+      "custom/c21.-1hHvql9LlvDiKGc9zZsJwGCUcN4xbu3PFkiguH1ExSfII5bTO3j_3PSX6cYrJdwbUDWWcyhCi85wTtlKP0NDQ.780x1040.SlkdvhBPxIBH90CFR41WMV7ProyR_VFr83g8TXbP8R0bNt6n-zKaf9tyX-UhkSo4vxJtjCD9Wc_B94hvWmnfBA.jpg",
       "Good resize response for jpg",
       goodRedirectResult
     );
