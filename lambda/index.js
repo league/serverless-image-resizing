@@ -8,10 +8,13 @@ const Sharp = require('sharp');
 
 const BUCKET = process.env.BUCKET;
 const URL = process.env.URL;
+const PUBLIC_KEY_B64 = process.env.PUBLIC_KEY;
+const public_key = Buffer.from(PUBLIC_KEY_B64, 'base64');
 
 const theHandler = function(event, context, callback) {
   const key = event.queryStringParameters.key;
-  const match = key.match(/(\d+)x(\d+)\/(.*)/);
+  const match = key.match(/custom\/([0-9a-f]+)\.([-_0-9A-Za-z]+)\.(\d+)x(\d+)\.([-_0-9A-Za-z]+)\.([a-z]+)/);
+  //                                ^ID          ^SIG1            ^W    ^H      ^SIG2             ^EXT
   if(match == null) {
     callback({
       statusCode: '400',
@@ -21,20 +24,45 @@ const theHandler = function(event, context, callback) {
     return;
   }
 
-  const width = parseInt(match[1], 10);
-  const height = parseInt(match[2], 10);
-  const originalKey = match[3];
+  const photoId = match[1];
+  const sig1 = match[2];
+  const width = parseInt(match[3], 10);
+  const height = parseInt(match[4], 10);
+  const sig2 = match[5]; // SIG2 (the one we're verifying)
+  const ext = match[6];
+  const signedBase = sig1 + "." + width + "x" + height;
+  const originalKey = "fullsize/" + photoId + "." + sig1 + "." + ext;
+
+  var targetFormat;
+  var contentType;
+
+  if(ext == "jpg") {
+    targetFormat = "jpeg";
+    contentType = "image/jpeg";
+  }
+  else if(ext == "png") {
+    targetFormat = "png";
+    contentType = "image/png";
+  }
+  else {
+    callback({
+      statusCode: '400',
+      code: 'BadRequest',
+      body: 'Unsupported extension ' + ext
+    });
+    return;
+  }
 
   S3.getObject({Bucket: BUCKET, Key: originalKey}).promise()
     .then(data => Sharp(data.Body)
       .resize(width, height)
-      .toFormat('png')
+      .toFormat(targetFormat)
       .toBuffer()
     )
     .then(buffer => S3.putObject({
         Body: buffer,
         Bucket: BUCKET,
-        ContentType: 'image/png',
+        ContentType: contentType,
         Key: key,
       }).promise()
     )
@@ -64,6 +92,12 @@ const testHandler = function(key, mesg, check) {
     });
 }
 
+const goodRedirectResult = function(err, result) {
+  return err == null && result != null && 'statusCode' in result &&
+    result.statusCode == '301' && 'headers' in result &&
+    'location' in result.headers
+}
+
 exports.handler = function(event, context, callback) {
   if('tests' in event) {
     console.log("------ TESTS ------");
@@ -76,20 +110,25 @@ exports.handler = function(event, context, callback) {
       });
 
     testHandler(
-      "1x1/nothing",
+      "custom/ffffffffffffffff.ABCD1234abcd.1x1.EFGH5678efgh.png",
       "NoSuchKey response",
       function(err, result) {
         return err != null && 'code' in err && err.code == 'NoSuchKey';
       });
 
     testHandler(
-      "320x200/pastel-hills-inverse.png", // was 3200x2000
+      // Original is 3200x2000, so we'll try 10% = 320x200
+      "custom/a3f7.LEcqytQt83qwZN1xyzvgJ7Op92AtPmauZI4bNwvuwm9leEmKjb0IWnARYRTJZaeGXQ2LyCYmdCbxlYuyx3UsCw.320x200.abc.png",
       "Good resize response for png",
-      function(err, result) {
-        return err == null && result != null && 'statusCode' in result &&
-          result.statusCode == '301' && 'headers' in result &&
-          'location' in result.headers
-      });
+      goodRedirectResult
+    );
+
+    testHandler(
+      // Original was 3120x4160 so we'll try 25% = 780x1040
+      "custom/c21.-1hHvql9LlvDiKGc9zZsJwGCUcN4xbu3PFkiguH1ExSfII5bTO3j_3PSX6cYrJdwbUDWWcyhCi85wTtlKP0NDQ.780x1040.abc.jpg",
+      "Good resize response for jpg",
+      goodRedirectResult
+    );
   }
   else {
     theHandler(event, context, callback);
